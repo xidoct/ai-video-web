@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>电商自动剪辑 Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="panel input-panel">
+      <div class="title-row">
+        <div>
+          <h1>电商自动剪辑 Demo</h1>
+          <p>上传商品素材文件夹、BGM 和口播文案，自动生成竖屏成片。</p>
+        </div>
+      </div>
+
+      <form id="jobForm">
+        <label class="field">
+          <span>商品卖点素材文件夹</span>
+          <input id="materials" name="materials" type="file" webkitdirectory directory multiple required>
+        </label>
+
+        <label class="field">
+          <span>BGM 文件</span>
+          <input id="bgm" name="bgm" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,audio/*">
+        </label>
+
+        <label class="field">
+          <span>口播文案</span>
+          <textarea id="scriptText" name="script_text" rows="9">{{ default_script }}</textarea>
+        </label>
+
+        <div class="actions">
+          <button id="submitBtn" type="submit">开始生成视频</button>
+          <a id="downloadBtn" class="download hidden" href="#" download>下载成片</a>
+        </div>
+      </form>
+
+      <p class="hint">上传大小上限：约 {{ max_upload_mb }} MB。建议先用少量素材测试一遍。</p>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="log-header">
+        <h2>生成日志</h2>
+        <span id="statusBadge">待开始</span>
+      </div>
+      <pre id="logs">选择文件后点击“开始生成视频”。</pre>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("jobForm");
+    const materialsInput = document.getElementById("materials");
+    const bgmInput = document.getElementById("bgm");
+    const scriptText = document.getElementById("scriptText");
+    const logs = document.getElementById("logs");
+    const statusBadge = document.getElementById("statusBadge");
+    const submitBtn = document.getElementById("submitBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+
+    let pollTimer = null;
+
+    function setStatus(text, cls) {
+      statusBadge.textContent = text;
+      statusBadge.className = cls || "";
+    }
+
+    function renderLogs(lines) {
+      logs.textContent = lines && lines.length ? lines.join("\n") : "暂无日志";
+      logs.scrollTop = logs.scrollHeight;
+    }
+
+    async function pollJob(jobId) {
+      const response = await fetch(`/api/jobs/${jobId}`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "任务查询失败");
+      }
+
+      renderLogs(data.logs);
+
+      if (data.status === "queued") setStatus("排队中", "queued");
+      if (data.status === "running") setStatus("生成中", "running");
+
+      if (data.status === "done") {
+        clearInterval(pollTimer);
+        setStatus("已完成", "done");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "重新生成";
+        downloadBtn.href = data.download_url;
+        downloadBtn.classList.remove("hidden");
+      }
+
+      if (data.status === "failed") {
+        clearInterval(pollTimer);
+        setStatus("失败", "failed");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "重新生成";
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      if (!materialsInput.files.length) {
+        alert("请选择商品素材文件夹。");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("script_text", scriptText.value);
+
+      for (const file of materialsInput.files) {
+        formData.append("materials", file, file.webkitRelativePath || file.name);
+      }
+
+      if (bgmInput.files.length) {
+        formData.append("bgm", bgmInput.files[0], bgmInput.files[0].name);
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "上传中...";
+      downloadBtn.classList.add("hidden");
+      setStatus("上传中", "queued");
+      renderLogs(["正在上传文件，请保持页面打开。"]);
+
+      try {
+        const response = await fetch("/api/jobs", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "创建任务失败");
+        }
+
+        submitBtn.textContent = "生成中...";
+        setStatus("生成中", "running");
+        pollTimer = setInterval(() => pollJob(data.job_id).catch((error) => {
+          clearInterval(pollTimer);
+          submitBtn.disabled = false;
+          setStatus("查询失败", "failed");
+          renderLogs([error.message]);
+        }), 2000);
+        await pollJob(data.job_id);
+      } catch (error) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "开始生成视频";
+        setStatus("失败", "failed");
+        renderLogs([error.message]);
+      }
+    });
+  </script>
+</body>
+</html>

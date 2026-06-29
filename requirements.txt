@@ -1,0 +1,6 @@
+Flask>=3.0.0
+gunicorn>=22.0.0
+edge-tts>=7.0.0
+moviepy>=1.0.3,<2.0.0
+imageio-ffmpeg>=0.4.9
+setuptools<81
